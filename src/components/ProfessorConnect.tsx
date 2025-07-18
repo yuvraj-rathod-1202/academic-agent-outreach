@@ -6,6 +6,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Mail, Send, User, BookOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import { saveEmailToFirestore, sendAutomaticEmail } from "@/services/emailService";
 
 interface Professor {
   id: string;
@@ -31,6 +33,7 @@ const ProfessorConnect = () => {
   const [emailDraft, setEmailDraft] = useState<EmailDraft>({ subject: '', body: '' });
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const handleResearchSubmit = async () => {
     if (!researchInterest.trim()) return;
@@ -94,20 +97,19 @@ const ProfessorConnect = () => {
         subject: `Research Collaboration Opportunity - ${researchInterest}`,
         body: `Dear ${professor.name},
 
-I hope this email finds you well. My name is [Your Name], and I am a [Your Year] student majoring in [Your Major] at [University Name].
+I hope this email finds you well. My name is ${user?.displayName || user?.email || '[Your Name]'}, and I am a student interested in research collaboration.
 
 I am reaching out because I am deeply interested in your research work, particularly in ${professor.research_areas.slice(0, 2).join(' and ')}. Your recent publications and contributions to the field have greatly inspired my academic journey.
 
 I have been working on research related to "${researchInterest}" and believe that your expertise would be invaluable to my project. I would be honored to discuss potential collaboration opportunities or learn more about ongoing research in your lab.
 
-I have attached my resume and would be happy to provide additional information about my background and research interests. Would you be available for a brief meeting in the coming weeks to discuss this further?
+I would be happy to provide additional information about my background and research interests. Would you be available for a brief meeting in the coming weeks to discuss this further?
 
 Thank you for your time and consideration. I look forward to hearing from you.
 
 Best regards,
-[Your Name]
-[Your Email]
-[Your Phone Number]`
+${user?.displayName || user?.email || '[Your Name]'}
+${user?.email || '[Your Email]'}`
       };
       
       setEmailDraft(mockEmailDraft);
@@ -124,11 +126,22 @@ Best regards,
   };
 
   const handleSendEmail = async () => {
+    if (!user || !selectedProfessor) return;
+    
     setLoading(true);
     
     try {
-      // Simulate API calls to schedule email and save to Firestore
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Save email to Firestore and send automatic email
+      await sendAutomaticEmail({
+        userId: user.uid,
+        professorName: selectedProfessor.name,
+        professorEmail: selectedProfessor.email,
+        userEmail: user.email || '',
+        subject: emailDraft.subject,
+        body: emailDraft.body,
+        researchInterest,
+        status: 'sent'
+      });
       
       setStep('sent');
       toast({
@@ -136,9 +149,27 @@ Best regards,
         description: "Your email has been scheduled and saved for reference.",
       });
     } catch (error) {
+      console.error('Email sending error:', error);
+      
+      // Still save to Firestore even if sending fails
+      try {
+        await saveEmailToFirestore({
+          userId: user.uid,
+          professorName: selectedProfessor.name,
+          professorEmail: selectedProfessor.email,
+          userEmail: user.email || '',
+          subject: emailDraft.subject,
+          body: emailDraft.body,
+          researchInterest,
+          status: 'failed'
+        });
+      } catch (saveError) {
+        console.error('Error saving to Firestore:', saveError);
+      }
+      
       toast({
-        title: "Error",
-        description: "Failed to send email. Please try again.",
+        title: "Email Saved",
+        description: "Email saved to your profile but sending failed. Check your profile for details.",
         variant: "destructive"
       });
     } finally {
