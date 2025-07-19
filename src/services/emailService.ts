@@ -1,5 +1,7 @@
 import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { GoogleOAuthProvider, googleLogout, GoogleLogin, useGoogleLogin } from '@react-oauth/google';
+import axios from 'axios';
 
 export interface EmailData {
   userId: string;
@@ -37,25 +39,27 @@ export const sendAutomaticEmail = async (emailData: EmailData) => {
       ...emailData,
       status: 'scheduled'
     });
+
+    useGoogleLogin({
+      scope: 'https://www.googleapis.com/auth/gmail.send',
+      onSuccess: async (tokenResponse) => {
+        const accessToken = tokenResponse.access_token;
     
-    // Step 2: Send to backend for actual email delivery
-    const response = await fetch('/api/send-email', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+      // Step 2: Send to backend for actual email delivery
+        await axios.post('http://localhost:8000/api/send-email', {
+          access_token: tokenResponse.access_token,
+          to: emailData.professorEmail,
+          subject: emailData.subject,
+          body: emailData.body,
+        });
+
+        alert('Email sent successfully!');
       },
-      body: JSON.stringify({
-        emailId,
-        to: emailData.professorEmail,
-        from: emailData.userEmail,
-        subject: emailData.subject,
-        body: emailData.body,
-      }),
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to send email');
-    }
+      onError: (error) => {
+        console.error('Login failed:', error);
+        alert('Failed to login and send email.');
+      }
+  });
     
     return emailId;
   } catch (error) {

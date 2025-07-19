@@ -9,6 +9,7 @@ import Navbar from "@/components/Navbar";
 import Index from "./pages/Index";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 
 const queryClient = new QueryClient();
 
@@ -28,6 +29,7 @@ const App = () => {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <GoogleOAuthProvider clientId={import.meta.env.VITE_CLIENT_ID}>
       <TooltipProvider>
         <Toaster />
         <Sonner />
@@ -46,6 +48,7 @@ const App = () => {
           )}
         </BrowserRouter>
       </TooltipProvider>
+      </GoogleOAuthProvider>
     </QueryClientProvider>
   );
 };
