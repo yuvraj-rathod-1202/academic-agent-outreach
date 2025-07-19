@@ -8,18 +8,22 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
-import { Mail, Calendar, Clock, User, LogOut, ArrowLeft } from 'lucide-react';
+import { Mail, Calendar, Clock, User, LogOut, ArrowLeft, Send } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
+import { sendReminderEmail, EmailData } from '@/services/emailService';
 
 interface EmailRecord {
   id: string;
   professorName: string;
   professorEmail: string;
+  userEmail: string;
   subject: string;
+  body: string;
   status: 'sent' | 'scheduled' | 'delivered' | 'failed';
   sentAt: Date;
   researchInterest: string;
+  userId: string;
 }
 
 const Profile = () => {
@@ -28,6 +32,41 @@ const Profile = () => {
   const navigate = useNavigate();
   const [emails, setEmails] = useState<EmailRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sendingReminder, setSendingReminder] = useState<string | null>(null);
+
+  const handleSendReminder = async (email: EmailRecord) => {
+    if (!user) return;
+    
+    setSendingReminder(email.id);
+    
+    try {
+      const reminderEmailData: EmailData = {
+        userId: user.uid,
+        professorName: email.professorName,
+        professorEmail: email.professorEmail,
+        userEmail: user.email || email.userEmail,
+        subject: email.subject,
+        body: email.body,
+        researchInterest: email.researchInterest,
+        status: 'sent'
+      };
+
+      await sendReminderEmail(reminderEmailData);
+      
+      toast({
+        title: "Reminder Sent",
+        description: `Reminder email sent to ${email.professorName}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to Send Reminder",
+        description: error.message || "An error occurred while sending the reminder email.",
+        variant: "destructive"
+      });
+    } finally {
+      setSendingReminder(null);
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -178,6 +217,22 @@ const Profile = () => {
                           </span>
                         </div>
                       </div>
+                      
+                      {/* Reminder button for sent emails */}
+                      {email.status === 'sent' && (
+                        <div className="ml-4">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleSendReminder(email)}
+                            disabled={sendingReminder === email.id}
+                            className="text-xs"
+                          >
+                            <Send className="h-3 w-3 mr-1" />
+                            {sendingReminder === email.id ? 'Sending...' : 'Send Reminder'}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                     
                     {index < emails.length - 1 && <Separator className="mt-4" />}
