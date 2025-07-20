@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { useState, useEffect } from 'react';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, signInWithRedirect, GoogleAuthProvider, getRedirectResult } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,6 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, Mail, Lock, User } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { useGoogleLogin } from '@react-oauth/google';
 import { useAuth } from '@/hooks/useAuth';
 
 const Auth = () => {
@@ -18,6 +17,44 @@ const Auth = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const { toast } = useToast();
   const { updateAccessToken } = useAuth();
+
+  // Handle redirect result after Google OAuth (for fallback when popup is blocked)
+  useEffect(() => {
+    const handleRedirectResult = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (result) {
+          // Get the Google Access Token from the credential
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          const accessToken = credential?.accessToken;
+          
+          if (accessToken) {
+            const user = result.user;
+            
+            // Store the access token
+            await updateAccessToken(accessToken, '', user.uid);
+            
+            toast({
+              title: "Welcome!",
+              description: "Successfully logged in with Google and Gmail access granted.",
+            });
+          } else {
+            throw new Error('Could not obtain access token from redirect');
+          }
+        }
+      } catch (error: any) {
+        console.error('Redirect result error:', error);
+        
+        toast({
+          title: "Login Error",
+          description: error.message || "An error occurred during login.",
+          variant: "destructive"
+        });
+      }
+    };
+
+    handleRedirectResult();
+  }, [updateAccessToken, toast]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,61 +108,64 @@ const Auth = () => {
     }
   };
 
-  const handleGoogleLogin = useGoogleLogin({
-    scope: 'openid email profile https://www.googleapis.com/auth/gmail.send',
-    flow: 'auth-code',
-    onSuccess: async (codeResponse) => {
+  const handleGoogleLogin = async () => {
+    try {
       setLoading(true);
+      
+      // Create Google Auth provider with required scopes
+      const provider = new GoogleAuthProvider();
+      provider.addScope('https://www.googleapis.com/auth/gmail.send');
+      provider.addScope('email');
+      provider.addScope('profile');
+      
+      // Try popup first, fallback to redirect if blocked
       try {
-        // Send authorization code to backend
-        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/auth/callback`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            code: codeResponse.code
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to exchange authorization code');
-        }
-
-        const tokenData = await response.json();
-        
-        // Sign in to Firebase with Google for user management
-        const provider = new GoogleAuthProvider();
         const result = await signInWithPopup(auth, provider);
-        const user = result.user;
-
-        // Store tokens in Firestore
-        await updateAccessToken(tokenData.access_token, tokenData.refresh_token, user.uid);
         
-        toast({
-          title: "Welcome!",
-          description: "Successfully logged in with Google and Gmail access granted.",
-        });
-      } catch (error: any) {
-        console.error('Google login error:', error);
-        toast({
-          title: "Google Login Failed",
-          description: error.message,
-          variant: "destructive"
-        });
-      } finally {
-        setLoading(false);
+        // Get the Google Access Token from the credential
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        const accessToken = credential?.accessToken;
+        
+        if (accessToken) {
+          const user = result.user;
+          
+          // Store the access token (Note: This is short-lived, you should implement proper refresh token handling)
+          await updateAccessToken(accessToken, '', user.uid);
+          
+          toast({
+            title: "Welcome!",
+            description: "Successfully logged in with Google and Gmail access granted.",
+          });
+        } else {
+          throw new Error('Could not obtain access token');
+        }
+        
+      } catch (popupError: any) {
+        // If popup is blocked or fails, use redirect as fallback
+        if (popupError.code === 'auth/popup-blocked' || popupError.code === 'auth/popup-closed-by-user') {
+          console.log('Popup blocked, using redirect instead');
+          toast({
+            title: "Popup Blocked",
+            description: "Redirecting to Google sign-in page...",
+          });
+          await signInWithRedirect(auth, provider);
+          return; // Don't set loading false here, redirect will handle it
+        } else {
+          throw popupError; // Re-throw other errors
+        }
       }
-    },
-    onError: (error) => {
+      
+    } catch (error: any) {
       console.error('Google login error:', error);
       toast({
         title: "Google Login Failed",
-        description: "Failed to authenticate with Google.",
+        description: error.message,
         variant: "destructive"
       });
+    } finally {
+      setLoading(false);
     }
-  });
+  };
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center py-12 px-4">
@@ -263,7 +303,7 @@ const Auth = () => {
             </div>
             
             <Button 
-              onClick={() => handleGoogleLogin()} 
+              onClick={handleGoogleLogin} 
               variant="outline" 
               className="w-full mt-4" 
               disabled={loading}
