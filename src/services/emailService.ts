@@ -54,11 +54,14 @@ export const sendReminderEmail = async (originalEmailData: EmailData, accessToke
         originalEmailData.researchInterest,
       ]
     });
-    console.log('API response:', response.data);
+
+    const data = JSON.parse(response.data.body);
+
+    console.log('API response:', response.data.body);
     const reminderEmailData: EmailData = {
       ...originalEmailData,
-      subject: reminderSubject || response.data.subject || `Follow-up: ${originalEmailData.subject}`,
-      body: response.data.body || `Dear Professor ${originalEmailData.professorName},
+      subject: data.subject || `Follow-up: ${originalEmailData.subject}`,
+      body: data.body || `Dear Professor ${originalEmailData.professorName},
 
 I hope this email finds you well. I am writing to follow up on my previous email regarding research opportunities in ${originalEmailData.researchInterest}.
 
