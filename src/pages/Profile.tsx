@@ -11,11 +11,11 @@ import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Mail, Calendar, Clock, User, LogOut, ArrowLeft, Send, RotateCcw, Edit } from 'lucide-react';
+import { Mail, Calendar, Clock, User, LogOut, ArrowLeft, Send, RotateCcw, Edit, CheckCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
-import { sendReminderEmail, sendAutomaticEmail, EmailData } from '@/services/emailService';
-import GmailAuth from '@/components/GmailAuth';
+import { sendReminderEmail, sendAutomaticEmail, scheduleEmail, EmailData } from '@/services/emailService';
+import ScheduleDialog from '@/components/ScheduleDialog';
 
 interface EmailRecord {
   id: string;
@@ -26,12 +26,13 @@ interface EmailRecord {
   body: string;
   status: 'sent' | 'scheduled' | 'delivered' | 'failed';
   sentAt: Date;
+  scheduledAt?: Date;
   researchInterest: string;
   userId: string;
 }
 
 const Profile = () => {
-  const { user } = useAuth();
+  const { user, getValidAccessToken } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [emails, setEmails] = useState<EmailRecord[]>([]);
@@ -40,6 +41,8 @@ const Profile = () => {
   const [resendingEmail, setResendingEmail] = useState<string | null>(null);
   const [editingEmail, setEditingEmail] = useState<EmailRecord | null>(null);
   const [editDraft, setEditDraft] = useState<{ subject: string; body: string; to: string }>({ subject: '', body: '', to: '' });
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
+  const [scheduleEmailData, setScheduleEmailData] = useState<EmailRecord | null>(null);
 
   const handleSendReminder = async (email: EmailRecord) => {
     if (!user) return;
@@ -56,6 +59,17 @@ const Profile = () => {
     setSendingReminder(email.id);
     
     try {
+      // Get a valid access token
+      const accessToken = await getValidAccessToken();
+      if (!accessToken) {
+        toast({
+          title: "Authentication Required",
+          description: "Please connect your Gmail account first.",
+          variant: "destructive"
+        });
+        return;
+      }
+
       const reminderEmailData: EmailData = {
         userId: user.uid,
         professorName: email.professorName,
@@ -67,7 +81,7 @@ const Profile = () => {
         status: 'sent'
       };
 
-      await sendReminderEmail(reminderEmailData);
+      await sendReminderEmail(reminderEmailData, accessToken);
       
       toast({
         title: "Reminder Sent",
@@ -87,9 +101,11 @@ const Profile = () => {
   const handleResendEmail = async (email: EmailRecord) => {
     if (!user) return;
     
-    if (!user.accessToken) {
+    // Get a valid access token
+    const accessToken = await getValidAccessToken();
+    if (!accessToken) {
       toast({
-        title: "Gmail Not Connected",
+        title: "Authentication Required",
         description: "Please connect your Gmail account first to resend emails.",
         variant: "destructive"
       });
@@ -111,7 +127,7 @@ const Profile = () => {
         to: email.professorEmail
       };
 
-      await sendAutomaticEmail(resendEmailData, user.accessToken!);
+      await sendAutomaticEmail(resendEmailData, accessToken);
       
       toast({
         title: "Email Resent",
@@ -140,9 +156,11 @@ const Profile = () => {
   const handleSaveAndResend = async () => {
     if (!editingEmail || !user) return;
     
-    if (!user.accessToken) {
+    // Get a valid access token
+    const accessToken = await getValidAccessToken();
+    if (!accessToken) {
       toast({
-        title: "Gmail Not Connected",
+        title: "Authentication Required",
         description: "Please connect your Gmail account first to send emails.",
         variant: "destructive"
       });
@@ -164,7 +182,7 @@ const Profile = () => {
         to: editDraft.to
       };
 
-      await sendAutomaticEmail(updatedEmailData, user.accessToken!);
+      await sendAutomaticEmail(updatedEmailData, accessToken);
       
       toast({
         title: "Email Sent",
@@ -180,6 +198,49 @@ const Profile = () => {
       });
     } finally {
       setResendingEmail(null);
+    }
+  };
+
+  const handleScheduleResend = (email: EmailRecord) => {
+    setScheduleEmailData(email);
+    setShowScheduleDialog(true);
+  };
+
+  const handleScheduleEmail = async (scheduledDate: Date) => {
+    if (!scheduleEmailData || !user) return;
+    
+    setResendingEmail(scheduleEmailData.id);
+    setShowScheduleDialog(false);
+    
+    try {
+      const emailData = {
+        userId: user.uid,
+        professorName: scheduleEmailData.professorName,
+        professorEmail: scheduleEmailData.professorEmail,
+        userEmail: user.email || scheduleEmailData.userEmail,
+        subject: scheduleEmailData.subject,
+        body: scheduleEmailData.body,
+        researchInterest: scheduleEmailData.researchInterest,
+        status: 'scheduled' as const,
+        to: scheduleEmailData.professorEmail,
+        scheduledAt: scheduledDate
+      };
+
+      await scheduleEmail(emailData, scheduledDate);
+      
+      toast({
+        title: "Email Scheduled",
+        description: `Email scheduled for ${scheduledDate.toLocaleString()}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to Schedule Email",
+        description: error.message || "An error occurred while scheduling the email.",
+        variant: "destructive"
+      });
+    } finally {
+      setResendingEmail(null);
+      setScheduleEmailData(null);
     }
   };
 
@@ -268,13 +329,16 @@ const Profile = () => {
               <div>
                 <h1 className="text-2xl font-bold">{user.displayName || 'User'}</h1>
                 <p className="text-muted-foreground">{user.email}</p>
+                {user?.accessToken && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                    <span className="text-sm text-green-600 font-medium">Gmail Connected</span>
+                  </div>
+                )}
               </div>
             </CardTitle>
           </CardHeader>
         </Card>
-
-        {/* Gmail Authentication */}
-        <GmailAuth />
 
         {/* Email History */}
         <Card>
@@ -326,22 +390,25 @@ const Profile = () => {
                         </p>
                         
                         <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            <p>
-                              {email.sentAt
-                                ? `${email.sentAt.toLocaleDateString()} ${email.sentAt.toLocaleTimeString()}`
-                                : 'Date not available'}
-                            </p>
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            <p>
-                              {email.sentAt
-                                ? `${email.sentAt.toLocaleDateString()} ${email.sentAt.toLocaleTimeString()}`
-                                : 'Date not available'}
-                            </p>
-                          </span>
+                          {email.status === 'scheduled' && email.scheduledAt ? (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              Scheduled: {email.scheduledAt.toLocaleDateString()} {email.scheduledAt.toLocaleTimeString()}
+                            </span>
+                          ) : email.sentAt ? (
+                            <>
+                              <span className="flex items-center gap-1">
+                                <Calendar className="h-3 w-3" />
+                                {email.sentAt.toLocaleDateString()}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3" />
+                                {email.sentAt.toLocaleTimeString()}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">Date not available</span>
+                          )}
                         </div>
                       </div>
                       
@@ -463,6 +530,13 @@ const Profile = () => {
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* Schedule Dialog */}
+      <ScheduleDialog
+        open={showScheduleDialog}
+        onOpenChange={setShowScheduleDialog}
+        onSchedule={handleScheduleEmail}
+      />
     </div>
   );
 };

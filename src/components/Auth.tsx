@@ -72,22 +72,42 @@ const Auth = () => {
   };
 
   const handleGoogleLogin = useGoogleLogin({
-    scope: 'https://www.googleapis.com/auth/gmail.send',
-    onSuccess: async (tokenResponse) => {
+    scope: 'openid email profile https://www.googleapis.com/auth/gmail.send',
+    flow: 'auth-code',
+    onSuccess: async (codeResponse) => {
       setLoading(true);
       try {
-        // Store the access token
-        updateAccessToken(tokenResponse.access_token);
+        // Send authorization code to backend
+        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/auth/callback`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            code: codeResponse.code
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to exchange authorization code');
+        }
+
+        const tokenData = await response.json();
         
-        // Also sign in to Firebase with Google for user management
+        // Sign in to Firebase with Google for user management
         const provider = new GoogleAuthProvider();
-        await signInWithPopup(auth, provider);
+        const result = await signInWithPopup(auth, provider);
+        const user = result.user;
+
+        // Store tokens in Firestore
+        await updateAccessToken(tokenData.access_token, tokenData.refresh_token, user.uid);
         
         toast({
           title: "Welcome!",
-          description: "Successfully logged in with Google.",
+          description: "Successfully logged in with Google and Gmail access granted.",
         });
       } catch (error: any) {
+        console.error('Google login error:', error);
         toast({
           title: "Google Login Failed",
           description: error.message,

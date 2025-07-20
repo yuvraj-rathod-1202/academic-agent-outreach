@@ -1,15 +1,16 @@
+import React from 'react';
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Mail, Send, User, BookOpen } from "lucide-react";
+import { Loader2, Mail, Send, User, BookOpen, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { saveEmailToFirestore, sendAutomaticEmail } from "@/services/emailService";
+import { saveEmailToFirestore, sendAutomaticEmail, scheduleEmail } from "@/services/emailService";
 import axios from "axios";
-import { useGoogleLogin } from "@react-oauth/google";
+import ScheduleDialog from "@/components/ScheduleDialog";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -38,8 +39,9 @@ const ProfessorConnect = () => {
   const [emailDraft, setEmailDraft] = useState<EmailDraft>({ subject: '', body: '' });
   const [loading, setLoading] = useState(false);
   const [emailGenerationLoading, setEmailGenerationLoading] = useState(false);
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, getValidAccessToken } = useAuth();
 
   const handleResearchSubmit = async () => {
     if (!researchInterest.trim()) return;
@@ -127,13 +129,45 @@ const ProfessorConnect = () => {
     }
   };
 
-  const loginAndSendEmail = useGoogleLogin({
-    scope: 'https://www.googleapis.com/auth/gmail.send',
-    onSuccess: async (tokenResponse) => {
-      const accessToken = tokenResponse.access_token;
+  const handleSendEmail = async () => {
+    if (!user || !selectedProfessor) return;
+    setLoading(true);
+
+    try {
+      // Get a valid access token
+      const accessToken = await getValidAccessToken();
+      if (!accessToken) {
+        toast({
+          title: "Authentication Required",
+          description: "Please connect your Gmail account first.",
+          variant: "destructive"
+        });
+        setLoading(false);
+        return;
+      }
+
+      await sendAutomaticEmail({
+        userId: user.uid,
+        professorName: selectedProfessor.name,
+        professorEmail: selectedProfessor.email,
+        userEmail: user.email || '',
+        subject: emailDraft.subject,
+        body: emailDraft.body,
+        researchInterest,
+        status: 'sent',
+        to: emailDraft.to
+      }, accessToken);
+
+      setStep('sent');
+      toast({
+        title: "Email Sent Successfully!",
+        description: "Your email has been scheduled and saved for reference.",
+      });
+    } catch (err) {
+      console.error('Email sending failed:', err);
 
       try {
-        await sendAutomaticEmail({
+        await saveEmailToFirestore({
           userId: user.uid,
           professorName: selectedProfessor.name,
           professorEmail: selectedProfessor.email,
@@ -141,59 +175,58 @@ const ProfessorConnect = () => {
           subject: emailDraft.subject,
           body: emailDraft.body,
           researchInterest,
-          status: 'sent',
+          status: 'failed',
           to: emailDraft.to
-        }, accessToken);
-
-        setStep('sent');
-        toast({
-          title: "Email Sent Successfully!",
-          description: "Your email has been scheduled and saved for reference.",
         });
-      } catch (err) {
-        console.error('Email sending failed:', err);
-
-        try {
-          await saveEmailToFirestore({
-            userId: user.uid,
-            professorName: selectedProfessor.name,
-            professorEmail: selectedProfessor.email,
-            userEmail: user.email || '',
-            subject: emailDraft.subject,
-            body: emailDraft.body,
-            researchInterest,
-            status: 'failed'
-          });
-        } catch (saveErr) {
-          console.error('Firestore saving failed:', saveErr);
-        }
-
-        toast({
-          title: "Email Saved",
-          description: "Email saved but sending failed. Check your profile.",
-          variant: "destructive"
-        });
-      } finally {
-        setLoading(false);
+      } catch (saveErr) {
+        console.error('Firestore saving failed:', saveErr);
       }
-    },
-    onError: (error) => {
-      console.error('Login failed:', error);
+
       toast({
-        title: "Authentication Failed",
-        description: "Could not authorize Gmail access.",
+        title: "Email Saved",
+        description: "Email saved but sending failed. Check your profile.",
         variant: "destructive"
       });
+    } finally {
       setLoading(false);
-    },
-  });
+    }
+  };
 
-  const handleSendEmail = async () => {
+  const handleScheduleEmail = async (scheduledDate: Date) => {
     if (!user || !selectedProfessor) return;
+    
     setLoading(true);
-
-    // start login flow which leads to sending email
-    loginAndSendEmail(); // This invokes the hook's callback
+    setShowScheduleDialog(false);
+    
+    try {
+      await scheduleEmail({
+        userId: user.uid,
+        professorName: selectedProfessor.name,
+        professorEmail: selectedProfessor.email,
+        userEmail: user.email || '',
+        subject: emailDraft.subject,
+        body: emailDraft.body,
+        researchInterest,
+        status: 'scheduled',
+        to: emailDraft.to,
+        scheduledAt: scheduledDate
+      }, scheduledDate);
+      
+      setStep('sent');
+      toast({
+        title: "Email Scheduled Successfully!",
+        description: `Your email has been scheduled for ${scheduledDate.toLocaleString()}`,
+      });
+    } catch (error) {
+      console.error('Email scheduling error:', error);
+      toast({
+        title: "Scheduling Failed",
+        description: "Failed to schedule email. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const resetFlow = () => {
@@ -357,17 +390,34 @@ const ProfessorConnect = () => {
                 ) : (
                   <>
                     <Send className="mr-2 h-4 w-4" />
-                    Send Email
+                    Send Now
                   </>
                 )}
               </Button>
               
-              <Button variant="outline" onClick={() => setStep('selection')}>
-                Back to Professors
+              <Button 
+                variant="outline" 
+                onClick={() => setShowScheduleDialog(true)} 
+                disabled={loading}
+                className="flex-1"
+              >
+                <Clock className="mr-2 h-4 w-4" />
+                Schedule
+              </Button>
+              
+              <Button variant="ghost" onClick={() => setStep('selection')}>
+                Back
               </Button>
             </div>
           </CardContent>
         </Card>
+
+        <ScheduleDialog
+        open={showScheduleDialog}
+        onOpenChange={setShowScheduleDialog}
+        onSchedule={handleScheduleEmail}
+        loading={loading}
+      />
       </div>
     );
   }
@@ -384,7 +434,7 @@ const ProfessorConnect = () => {
           
           <h2 className="text-2xl font-bold">Email Sent Successfully!</h2>
           <p className="text-muted-foreground">
-            Your email to {selectedProfessor?.name} has been scheduled and saved to your records.
+            Your email to {selectedProfessor?.name} has been sent and saved to your records.
           </p>
           
           <Button onClick={resetFlow} className="w-full">
@@ -395,7 +445,6 @@ const ProfessorConnect = () => {
     );
   }
 
-  return null;
 };
 
 export default ProfessorConnect;

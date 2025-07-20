@@ -1,6 +1,5 @@
 import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { GoogleOAuthProvider, googleLogout, GoogleLogin, useGoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -15,13 +14,15 @@ export interface EmailData {
   researchInterest: string;
   status: 'sent' | 'scheduled' | 'delivered' | 'failed';
   to?: string; // Optional field for API-provided recipient
+  scheduledAt?: Date; // For scheduled emails
 }
 
 export const saveEmailToFirestore = async (emailData: EmailData) => {
   try {
     const docRef = await addDoc(collection(db, 'emails'), {
       ...emailData,
-      sentAt: serverTimestamp(),
+      sentAt: emailData.status === 'sent' ? serverTimestamp() : null,
+      scheduledAt: emailData.scheduledAt || null,
       createdAt: serverTimestamp()
     });
     
@@ -32,7 +33,7 @@ export const saveEmailToFirestore = async (emailData: EmailData) => {
   }
 };
 
-export const sendReminderEmail = async (originalEmailData: EmailData, reminderSubject?: string) => {
+export const sendReminderEmail = async (originalEmailData: EmailData, accessToken: string, reminderSubject?: string) => {
   try {
     // Prepare user data for API
     const userData = {
@@ -72,39 +73,38 @@ ${originalEmailData.userEmail}`,
       status: 'scheduled'
     };
 
-    useGoogleLogin({
-      scope: 'https://www.googleapis.com/auth/gmail.send',
-      onSuccess: async (tokenResponse) => {
-        try {
-          // Save reminder email to Firestore
-          const emailId = await saveEmailToFirestore({
-            ...reminderEmailData,
-            status: 'scheduled'
-          });
-
-          // Send the reminder email
-          await axios.post(`${API_BASE_URL}/api/send-email`, {
-            access_token: tokenResponse.access_token,
-            to: response.data.to || reminderEmailData.professorEmail,
-            subject: reminderEmailData.subject,
-            body: reminderEmailData.body,
-          });
-
-          alert('Reminder email sent successfully!');
-          return emailId;
-        } catch (error) {
-          console.error('Error sending reminder email:', error);
-          alert('Failed to send reminder email.');
-          throw error;
-        }
-      },
-      onError: (error) => {
-        console.error('Login failed:', error);
-        alert('Failed to login and send reminder email.');
-      }
+    // Save reminder email to Firestore
+    const emailId = await saveEmailToFirestore({
+      ...reminderEmailData,
+      status: 'scheduled'
     });
+
+    // Send the reminder email
+    await axios.post(`${API_BASE_URL}/api/send-email`, {
+      access_token: accessToken,
+      to: response.data.to || reminderEmailData.professorEmail,
+      subject: reminderEmailData.subject,
+      body: reminderEmailData.body,
+    });
+
+    return emailId;
   } catch (error) {
     console.error('Error sending reminder email:', error);
+    throw error;
+  }
+};
+
+export const scheduleEmail = async (emailData: EmailData, scheduledDate: Date) => {
+  try {
+    const emailId = await saveEmailToFirestore({
+      ...emailData,
+      status: 'scheduled',
+      scheduledAt: scheduledDate
+    });
+
+    return emailId;
+  } catch (error) {
+    console.error('Error scheduling email:', error);
     throw error;
   }
 };
