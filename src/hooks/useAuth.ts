@@ -20,6 +20,8 @@ export const useAuth = () => {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('Auth state changed:', user?.email || 'No user');
+      
       if (user) {
         // Try to get stored access token from Firestore
         try {
@@ -32,8 +34,13 @@ export const useAuth = () => {
             // Check if token is expired
             if (Date.now() >= tokenData.expires_at) {
               // Token expired, try to refresh
-              const refreshedToken = await refreshAccessToken(user.uid, tokenData.refresh_token);
-              accessToken = refreshedToken;
+              try {
+                const refreshedToken = await refreshAccessToken(user.uid, tokenData.refresh_token);
+                accessToken = refreshedToken;
+              } catch (refreshError) {
+                console.error('Failed to refresh token:', refreshError);
+                accessToken = undefined;
+              }
             } else {
               accessToken = tokenData.access_token;
             }
@@ -43,6 +50,8 @@ export const useAuth = () => {
             ...user,
             accessToken: accessToken
           } as ExtendedUser);
+          
+          console.log('User set with access token:', !!accessToken);
         } catch (error) {
           console.error('Error fetching user tokens:', error);
           setUser({

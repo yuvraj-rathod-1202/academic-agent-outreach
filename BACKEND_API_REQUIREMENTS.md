@@ -20,15 +20,17 @@ This document outlines the required backend API endpoints for the refresh token 
 ```json
 {
   "access_token": "ya29.access_token_here",
-  "refresh_token": "1//refresh_token_here",
+  "refresh_token": "1//0xxx-refresh_token_here",
   "expires_in": 3600,
-  "token_type": "Bearer"
+  "token_type": "Bearer",
+  "scope": "openid email profile https://www.googleapis.com/auth/gmail.send"
 }
 ```
 
 **Implementation Notes:**
-- Use Google's OAuth2 token exchange endpoint
+- Use Google's OAuth2 token exchange endpoint: `https://oauth2.googleapis.com/token`
 - Exchange the authorization code for tokens using your Google OAuth2 credentials
+- **Important**: Must include `access_type=offline` to get refresh tokens
 - Return both access_token and refresh_token to the frontend
 
 ### 2. Token Refresh Endpoint
@@ -90,6 +92,7 @@ async def auth_callback(request: dict):
                 "code": request["code"],
                 "grant_type": "authorization_code",
                 "redirect_uri": GOOGLE_REDIRECT_URI,
+                "access_type": "offline",  # This is crucial for refresh tokens
             }
         )
         
