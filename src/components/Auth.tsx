@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, Mail, Lock, User } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useGoogleLogin } from '@react-oauth/google';
+import { useAuth } from '@/hooks/useAuth';
 
 const Auth = () => {
   const [loading, setLoading] = useState(false);
@@ -15,6 +17,7 @@ const Auth = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const { toast } = useToast();
+  const { updateAccessToken } = useAuth();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,26 +71,41 @@ const Auth = () => {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setLoading(true);
-    const provider = new GoogleAuthProvider();
-
-    try {
-      await signInWithPopup(auth, provider);
-      toast({
-        title: "Welcome!",
-        description: "Successfully logged in with Google.",
-      });
-    } catch (error: any) {
+  const handleGoogleLogin = useGoogleLogin({
+    scope: 'https://www.googleapis.com/auth/gmail.send',
+    onSuccess: async (tokenResponse) => {
+      setLoading(true);
+      try {
+        // Store the access token
+        updateAccessToken(tokenResponse.access_token);
+        
+        // Also sign in to Firebase with Google for user management
+        const provider = new GoogleAuthProvider();
+        await signInWithPopup(auth, provider);
+        
+        toast({
+          title: "Welcome!",
+          description: "Successfully logged in with Google.",
+        });
+      } catch (error: any) {
+        toast({
+          title: "Google Login Failed",
+          description: error.message,
+          variant: "destructive"
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    onError: (error) => {
+      console.error('Google login error:', error);
       toast({
         title: "Google Login Failed",
-        description: error.message,
+        description: "Failed to authenticate with Google.",
         variant: "destructive"
       });
-    } finally {
-      setLoading(false);
     }
-  };
+  });
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center py-12 px-4">
@@ -225,9 +243,9 @@ const Auth = () => {
             </div>
             
             <Button 
+              onClick={() => handleGoogleLogin()} 
               variant="outline" 
               className="w-full mt-4" 
-              onClick={handleGoogleLogin}
               disabled={loading}
             >
               <User className="mr-2 h-4 w-4" />

@@ -8,10 +8,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
-import { Mail, Calendar, Clock, User, LogOut, ArrowLeft, Send } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Mail, Calendar, Clock, User, LogOut, ArrowLeft, Send, RotateCcw, Edit } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
-import { sendReminderEmail, EmailData } from '@/services/emailService';
+import { sendReminderEmail, sendAutomaticEmail, EmailData } from '@/services/emailService';
+import GmailAuth from '@/components/GmailAuth';
 
 interface EmailRecord {
   id: string;
@@ -33,9 +37,21 @@ const Profile = () => {
   const [emails, setEmails] = useState<EmailRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [sendingReminder, setSendingReminder] = useState<string | null>(null);
+  const [resendingEmail, setResendingEmail] = useState<string | null>(null);
+  const [editingEmail, setEditingEmail] = useState<EmailRecord | null>(null);
+  const [editDraft, setEditDraft] = useState<{ subject: string; body: string; to: string }>({ subject: '', body: '', to: '' });
 
   const handleSendReminder = async (email: EmailRecord) => {
     if (!user) return;
+    
+    if (!user.accessToken) {
+      toast({
+        title: "Gmail Not Connected",
+        description: "Please connect your Gmail account first to send reminder emails.",
+        variant: "destructive"
+      });
+      return;
+    }
     
     setSendingReminder(email.id);
     
@@ -68,6 +84,105 @@ const Profile = () => {
     }
   };
 
+  const handleResendEmail = async (email: EmailRecord) => {
+    if (!user) return;
+    
+    if (!user.accessToken) {
+      toast({
+        title: "Gmail Not Connected",
+        description: "Please connect your Gmail account first to resend emails.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setResendingEmail(email.id);
+    
+    try {
+      const resendEmailData: EmailData = {
+        userId: user.uid,
+        professorName: email.professorName,
+        professorEmail: email.professorEmail,
+        userEmail: user.email || email.userEmail,
+        subject: email.subject,
+        body: email.body,
+        researchInterest: email.researchInterest,
+        status: 'sent',
+        to: email.professorEmail
+      };
+
+      await sendAutomaticEmail(resendEmailData, user.accessToken!);
+      
+      toast({
+        title: "Email Resent",
+        description: `Email resent successfully to ${email.professorName}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to Resend Email",
+        description: error.message || "An error occurred while resending the email.",
+        variant: "destructive"
+      });
+    } finally {
+      setResendingEmail(null);
+    }
+  };
+
+  const handleEditAndResend = (email: EmailRecord) => {
+    setEditingEmail(email);
+    setEditDraft({
+      subject: email.subject,
+      body: email.body,
+      to: email.professorEmail
+    });
+  };
+
+  const handleSaveAndResend = async () => {
+    if (!editingEmail || !user) return;
+    
+    if (!user.accessToken) {
+      toast({
+        title: "Gmail Not Connected",
+        description: "Please connect your Gmail account first to send emails.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setResendingEmail(editingEmail.id);
+    
+    try {
+      const updatedEmailData: EmailData = {
+        userId: user.uid,
+        professorName: editingEmail.professorName,
+        professorEmail: editingEmail.professorEmail,
+        userEmail: user.email || editingEmail.userEmail,
+        subject: editDraft.subject,
+        body: editDraft.body,
+        researchInterest: editingEmail.researchInterest,
+        status: 'sent',
+        to: editDraft.to
+      };
+
+      await sendAutomaticEmail(updatedEmailData, user.accessToken!);
+      
+      toast({
+        title: "Email Sent",
+        description: `Updated email sent successfully to ${editingEmail.professorName}`,
+      });
+      
+      setEditingEmail(null);
+    } catch (error: any) {
+      toast({
+        title: "Failed to Send Email",
+        description: error.message || "An error occurred while sending the email.",
+        variant: "destructive"
+      });
+    } finally {
+      setResendingEmail(null);
+    }
+  };
+
   useEffect(() => {
     if (!user) return;
 
@@ -80,10 +195,11 @@ const Profile = () => {
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const emailsData: EmailRecord[] = [];
       querySnapshot.forEach((doc) => {
+        const data = doc.data();
         emailsData.push({
           id: doc.id,
-          ...doc.data(),
-          sentAt: doc.data().sentAt.toDate()
+          ...data,
+          sentAt: data.sentAt?.toDate?.() || null  // safely handle null/undefined
         } as EmailRecord);
       });
       setEmails(emailsData);
@@ -157,6 +273,9 @@ const Profile = () => {
           </CardHeader>
         </Card>
 
+        {/* Gmail Authentication */}
+        <GmailAuth />
+
         {/* Email History */}
         <Card>
           <CardHeader>
@@ -209,11 +328,19 @@ const Profile = () => {
                         <div className="flex items-center gap-4 text-xs text-muted-foreground">
                           <span className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
-                            {email.sentAt.toLocaleDateString()}
+                            <p>
+                              {email.sentAt
+                                ? `${email.sentAt.toLocaleDateString()} ${email.sentAt.toLocaleTimeString()}`
+                                : 'Date not available'}
+                            </p>
                           </span>
                           <span className="flex items-center gap-1">
                             <Clock className="h-3 w-3" />
-                            {email.sentAt.toLocaleTimeString()}
+                            <p>
+                              {email.sentAt
+                                ? `${email.sentAt.toLocaleDateString()} ${email.sentAt.toLocaleTimeString()}`
+                                : 'Date not available'}
+                            </p>
                           </span>
                         </div>
                       </div>
@@ -233,6 +360,32 @@ const Profile = () => {
                           </Button>
                         </div>
                       )}
+
+                      {/* Resend buttons for failed emails */}
+                      {email.status === 'failed' && (
+                        <div className="ml-4 flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleResendEmail(email)}
+                            disabled={resendingEmail === email.id}
+                            className="text-xs"
+                          >
+                            <RotateCcw className="h-3 w-3 mr-1" />
+                            {resendingEmail === email.id ? 'Sending...' : 'Resend'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleEditAndResend(email)}
+                            disabled={resendingEmail === email.id}
+                            className="text-xs"
+                          >
+                            <Edit className="h-3 w-3 mr-1" />
+                            Edit & Resend
+                          </Button>
+                        </div>
+                      )}
                     </div>
                     
                     {index < emails.length - 1 && <Separator className="mt-4" />}
@@ -242,6 +395,73 @@ const Profile = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* Edit Email Dialog */}
+        <Dialog open={!!editingEmail} onOpenChange={() => setEditingEmail(null)}>
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Edit and Resend Email</DialogTitle>
+            </DialogHeader>
+            
+            {editingEmail && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">To:</label>
+                  <Input
+                    value={editDraft.to}
+                    onChange={(e) => setEditDraft(prev => ({ ...prev, to: e.target.value }))}
+                    className="mt-1"
+                    placeholder="Professor's email address"
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-sm font-medium">Subject:</label>
+                  <Input
+                    value={editDraft.subject}
+                    onChange={(e) => setEditDraft(prev => ({ ...prev, subject: e.target.value }))}
+                    className="mt-1"
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-sm font-medium">Message:</label>
+                  <Textarea
+                    value={editDraft.body}
+                    onChange={(e) => setEditDraft(prev => ({ ...prev, body: e.target.value }))}
+                    className="mt-1 min-h-[300px]"
+                  />
+                </div>
+              </div>
+            )}
+            
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setEditingEmail(null)}
+                disabled={resendingEmail === editingEmail?.id}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveAndResend}
+                disabled={resendingEmail === editingEmail?.id || !editDraft.subject.trim() || !editDraft.body.trim() || !editDraft.to.trim()}
+              >
+                {resendingEmail === editingEmail?.id ? (
+                  <>
+                    <Send className="mr-2 h-4 w-4 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Send className="mr-2 h-4 w-4" />
+                    Send Email
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

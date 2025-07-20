@@ -3,6 +3,8 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { GoogleOAuthProvider, googleLogout, GoogleLogin, useGoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
 export interface EmailData {
   userId: string;
   professorName: string;
@@ -12,6 +14,7 @@ export interface EmailData {
   body: string;
   researchInterest: string;
   status: 'sent' | 'scheduled' | 'delivered' | 'failed';
+  to?: string; // Optional field for API-provided recipient
 }
 
 export const saveEmailToFirestore = async (emailData: EmailData) => {
@@ -31,8 +34,30 @@ export const saveEmailToFirestore = async (emailData: EmailData) => {
 
 export const sendReminderEmail = async (originalEmailData: EmailData, reminderSubject?: string) => {
   try {
-    const defaultReminderSubject = `Follow-up: ${originalEmailData.subject}`;
-    const reminderBody = `Dear Professor ${originalEmailData.professorName},
+    // Prepare user data for API
+    const userData = {
+      name: originalEmailData.userEmail.split('@')[0], // Extract name from email or use provided
+      email: originalEmailData.userEmail,
+    };
+
+    // Call the email API to generate a reminder email
+    const response = await axios.post(`${API_BASE_URL}/api/email`, {
+      name: originalEmailData.professorName,
+      email: originalEmailData.professorEmail,
+      user_prompt: `Follow-up reminder for: ${originalEmailData.researchInterest}`,
+      user_data: userData,
+      data: {
+        originalSubject: originalEmailData.subject,
+        originalBody: originalEmailData.body,
+        researchInterest: originalEmailData.researchInterest,
+        isReminder: true
+      }
+    });
+
+    const reminderEmailData: EmailData = {
+      ...originalEmailData,
+      subject: reminderSubject || response.data.subject || `Follow-up: ${originalEmailData.subject}`,
+      body: response.data.body || `Dear Professor ${originalEmailData.professorName},
 
 I hope this email finds you well. I am writing to follow up on my previous email regarding research opportunities in ${originalEmailData.researchInterest}.
 
@@ -43,12 +68,7 @@ If you have any questions or would like to discuss this further, please don't he
 Thank you for your time and consideration.
 
 Best regards,
-${originalEmailData.userEmail}`;
-
-    const reminderEmailData: EmailData = {
-      ...originalEmailData,
-      subject: reminderSubject || defaultReminderSubject,
-      body: reminderBody,
+${originalEmailData.userEmail}`,
       status: 'scheduled'
     };
 
@@ -63,9 +83,9 @@ ${originalEmailData.userEmail}`;
           });
 
           // Send the reminder email
-          await axios.post('http://localhost:8000/api/send-email', {
+          await axios.post(`${API_BASE_URL}/api/send-email`, {
             access_token: tokenResponse.access_token,
-            to: reminderEmailData.professorEmail,
+            to: response.data.to || reminderEmailData.professorEmail,
             subject: reminderEmailData.subject,
             body: reminderEmailData.body,
           });
@@ -89,38 +109,21 @@ ${originalEmailData.userEmail}`;
   }
 };
 
-export const sendAutomaticEmail = async (emailData: EmailData) => {
+export const sendAutomaticEmail = async (emailData: EmailData, accessToken: string) => {
   try {
-    // This would integrate with your backend API for sending emails
-    // For now, we'll simulate the process
-    
-    // Step 1: Save to Firestore
     const emailId = await saveEmailToFirestore({
       ...emailData,
       status: 'scheduled'
     });
 
-    useGoogleLogin({
-      scope: 'https://www.googleapis.com/auth/gmail.send',
-      onSuccess: async (tokenResponse) => {
-        const accessToken = tokenResponse.access_token;
-    
-      // Step 2: Send to backend for actual email delivery
-        await axios.post('http://localhost:8000/api/send-email', {
-          access_token: tokenResponse.access_token,
-          to: emailData.professorEmail,
-          subject: emailData.subject,
-          body: emailData.body,
-        });
+    await axios.post(`${API_BASE_URL}/api/send-email`, {
+      access_token: accessToken,
+      to: emailData.to || emailData.professorEmail,
+      subject: emailData.subject,
+      body: emailData.body,
+    });
 
-        alert('Email sent successfully!');
-      },
-      onError: (error) => {
-        console.error('Login failed:', error);
-        alert('Failed to login and send email.');
-      }
-  });
-    
+    alert('Email sent successfully!');
     return emailId;
   } catch (error) {
     console.error('Error sending email:', error);

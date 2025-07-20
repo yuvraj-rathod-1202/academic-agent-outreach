@@ -8,6 +8,10 @@ import { Loader2, Mail, Send, User, BookOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { saveEmailToFirestore, sendAutomaticEmail } from "@/services/emailService";
+import axios from "axios";
+import { useGoogleLogin } from "@react-oauth/google";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 interface Professor {
   id: string;
@@ -15,12 +19,13 @@ interface Professor {
   department: string;
   research_areas: string[];
   email: string;
-  rating: number;
+  additional_data: string[];
 }
 
 interface EmailDraft {
   subject: string;
   body: string;
+  to?: string;
 }
 
 type Step = 'input' | 'selection' | 'email' | 'sent';
@@ -32,6 +37,7 @@ const ProfessorConnect = () => {
   const [selectedProfessor, setSelectedProfessor] = useState<Professor | null>(null);
   const [emailDraft, setEmailDraft] = useState<EmailDraft>({ subject: '', body: '' });
   const [loading, setLoading] = useState(false);
+  const [emailGenerationLoading, setEmailGenerationLoading] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -40,43 +46,33 @@ const ProfessorConnect = () => {
     
     setLoading(true);
     try {
-      // Simulate API call to get matching professors
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Call the scraping API to get matching professors
+      const response = await axios.post(`${API_BASE_URL}/api/scraping`, {
+        prompt: researchInterest.trim()
+      });
       
-      // Mock professors data
-      const mockProfessors: Professor[] = [
-        {
-          id: '1',
-          name: 'Dr. Sarah Chen',
-          department: 'Computer Science',
-          research_areas: ['Machine Learning', 'AI Ethics', 'Neural Networks'],
-          email: 'sarah.chen@university.edu',
-          rating: 4.8
-        },
-        {
-          id: '2',
-          name: 'Prof. Michael Rodriguez',
-          department: 'Data Science',
-          research_areas: ['Deep Learning', 'Computer Vision', 'Robotics'],
-          email: 'michael.rodriguez@university.edu',
-          rating: 4.6
-        },
-        {
-          id: '3',
-          name: 'Dr. Lisa Zhang',
-          department: 'Information Systems',
-          research_areas: ['Natural Language Processing', 'Information Retrieval'],
-          email: 'lisa.zhang@university.edu',
-          rating: 4.7
-        }
-      ];
+      // Transform API response to match our Professor interface
+      const professorsData: Professor[] = response.data.map((prof: any, index: number) => ({
+        id: prof.id || `prof_${index}`,
+        name: prof.name || 'Unknown Professor',
+        department: prof.department || 'Unknown Department',
+        research_areas: Array.isArray(prof.research_areas) ? prof.research_areas : [prof.research_areas || 'General Research'],
+        email: prof.email || '',
+        additional_data: prof.additional_data || [""]
+      }));
       
-      setProfessors(mockProfessors);
+      setProfessors(professorsData);
       setStep('selection');
-    } catch (error) {
+      
+      toast({
+        title: "Success",
+        description: `Found ${professorsData.length} matching professors`,
+      });
+    } catch (error: any) {
+      console.error('API Error:', error);
       toast({
         title: "Error",
-        description: "Failed to find matching professors. Please try again.",
+        description: error.response?.data?.message || "Failed to find matching professors. Please try again.",
         variant: "destructive"
       });
     } finally {
@@ -86,74 +82,58 @@ const ProfessorConnect = () => {
 
   const handleProfessorSelect = async (professor: Professor) => {
     setSelectedProfessor(professor);
-    setLoading(true);
+    setEmailGenerationLoading(true);
     
     try {
-      // Simulate API call to draft email
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Mock email draft
-      const mockEmailDraft: EmailDraft = {
-        subject: `Research Collaboration Opportunity - ${researchInterest}`,
-        body: `Dear ${professor.name},
-
-I hope this email finds you well. My name is ${user?.displayName || user?.email || '[Your Name]'}, and I am a student interested in research collaboration.
-
-I am reaching out because I am deeply interested in your research work, particularly in ${professor.research_areas.slice(0, 2).join(' and ')}. Your recent publications and contributions to the field have greatly inspired my academic journey.
-
-I have been working on research related to "${researchInterest}" and believe that your expertise would be invaluable to my project. I would be honored to discuss potential collaboration opportunities or learn more about ongoing research in your lab.
-
-I would be happy to provide additional information about my background and research interests. Would you be available for a brief meeting in the coming weeks to discuss this further?
-
-Thank you for your time and consideration. I look forward to hearing from you.
-
-Best regards,
-${user?.displayName || user?.email || '[Your Name]'}
-${user?.email || '[Your Email]'}`
+      // Prepare user data
+      const userData = {
+        name: user?.displayName || '',
+        email: user?.email || '',
+        // Add any additional user data you want to send
       };
       
-      setEmailDraft(mockEmailDraft);
+      // Call the email drafting API
+      const response = await axios.post(`${API_BASE_URL}/api/email`, {
+        name: professor.name,
+        email: professor.email,
+        user_prompt: researchInterest,
+        user_data:`name:${userData.name}`,
+        data: Object.values(professor.additional_data).map(item => String(item))
+      });
+      
+      // Extract email draft from API response
+      const emailDraft: EmailDraft = {
+        subject: response.data.subject || `Research Collaboration Opportunity - ${researchInterest}`,
+        body: response.data.body || response.data.message || '',
+        to: response.data.to || professor.email
+      };
+      
+      setEmailDraft(emailDraft);
       setStep('email');
-    } catch (error) {
+      
+      toast({
+        title: "Email Draft Generated",
+        description: "Your email has been personalized for the selected professor",
+      });
+    } catch (error: any) {
+      console.error('Email draft API Error:', error);
       toast({
         title: "Error",
-        description: "Failed to generate email draft. Please try again.",
+        description: error.response?.data?.message || "Failed to generate email draft. Please try again.",
         variant: "destructive"
       });
     } finally {
-      setLoading(false);
+      setEmailGenerationLoading(false);
     }
   };
 
-  const handleSendEmail = async () => {
-    if (!user || !selectedProfessor) return;
-    
-    setLoading(true);
-    
-    try {
-      // Save email to Firestore and send automatic email
-      await sendAutomaticEmail({
-        userId: user.uid,
-        professorName: selectedProfessor.name,
-        professorEmail: selectedProfessor.email,
-        userEmail: user.email || '',
-        subject: emailDraft.subject,
-        body: emailDraft.body,
-        researchInterest,
-        status: 'sent'
-      });
-      
-      setStep('sent');
-      toast({
-        title: "Email Sent Successfully!",
-        description: "Your email has been scheduled and saved for reference.",
-      });
-    } catch (error) {
-      console.error('Email sending error:', error);
-      
-      // Still save to Firestore even if sending fails
+  const loginAndSendEmail = useGoogleLogin({
+    scope: 'https://www.googleapis.com/auth/gmail.send',
+    onSuccess: async (tokenResponse) => {
+      const accessToken = tokenResponse.access_token;
+
       try {
-        await saveEmailToFirestore({
+        await sendAutomaticEmail({
           userId: user.uid,
           professorName: selectedProfessor.name,
           professorEmail: selectedProfessor.email,
@@ -161,20 +141,59 @@ ${user?.email || '[Your Email]'}`
           subject: emailDraft.subject,
           body: emailDraft.body,
           researchInterest,
-          status: 'failed'
+          status: 'sent',
+          to: emailDraft.to
+        }, accessToken);
+
+        setStep('sent');
+        toast({
+          title: "Email Sent Successfully!",
+          description: "Your email has been scheduled and saved for reference.",
         });
-      } catch (saveError) {
-        console.error('Error saving to Firestore:', saveError);
+      } catch (err) {
+        console.error('Email sending failed:', err);
+
+        try {
+          await saveEmailToFirestore({
+            userId: user.uid,
+            professorName: selectedProfessor.name,
+            professorEmail: selectedProfessor.email,
+            userEmail: user.email || '',
+            subject: emailDraft.subject,
+            body: emailDraft.body,
+            researchInterest,
+            status: 'failed'
+          });
+        } catch (saveErr) {
+          console.error('Firestore saving failed:', saveErr);
+        }
+
+        toast({
+          title: "Email Saved",
+          description: "Email saved but sending failed. Check your profile.",
+          variant: "destructive"
+        });
+      } finally {
+        setLoading(false);
       }
-      
+    },
+    onError: (error) => {
+      console.error('Login failed:', error);
       toast({
-        title: "Email Saved",
-        description: "Email saved to your profile but sending failed. Check your profile for details.",
+        title: "Authentication Failed",
+        description: "Could not authorize Gmail access.",
         variant: "destructive"
       });
-    } finally {
       setLoading(false);
-    }
+    },
+  });
+
+  const handleSendEmail = async () => {
+    if (!user || !selectedProfessor) return;
+    setLoading(true);
+
+    // start login flow which leads to sending email
+    loginAndSendEmail(); // This invokes the hook's callback
   };
 
   const resetFlow = () => {
@@ -183,6 +202,7 @@ ${user?.email || '[Your Email]'}`
     setProfessors([]);
     setSelectedProfessor(null);
     setEmailDraft({ subject: '', body: '' });
+    setEmailGenerationLoading(false);
   };
 
   if (step === 'input') {
@@ -231,7 +251,12 @@ ${user?.email || '[Your Email]'}`
         
         <div className="grid gap-4">
           {professors.map((professor) => (
-            <Card key={professor.id} className="hover:shadow-md transition-shadow cursor-pointer">
+            <Card 
+              key={professor.id} 
+              className={`hover:shadow-md transition-shadow cursor-pointer ${
+                emailGenerationLoading ? 'opacity-50 pointer-events-none' : ''
+              }`}
+            >
               <CardContent className="p-6">
                 <div className="flex justify-between items-start">
                   <div className="space-y-3 flex-1">
@@ -246,14 +271,26 @@ ${user?.email || '[Your Email]'}`
                         <Badge key={area} variant="outline">{area}</Badge>
                       ))}
                     </div>
+
+                    <div className="flex flex-wrap gap-2">
+                        <Badge variant="secondary">{professor.email}</Badge>
+                    </div>
                     
-                    <p className="text-sm text-muted-foreground">
-                      Rating: {professor.rating}/5.0
-                    </p>
+                    
                   </div>
                   
-                  <Button onClick={() => handleProfessorSelect(professor)}>
-                    Select Professor
+                  <Button 
+                    onClick={() => handleProfessorSelect(professor)}
+                    disabled={emailGenerationLoading}
+                  >
+                    {emailGenerationLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generating Email...
+                      </>
+                    ) : (
+                      'Select Professor'
+                    )}
                   </Button>
                 </div>
               </CardContent>
@@ -283,7 +320,13 @@ ${user?.email || '[Your Email]'}`
         <Card>
           <CardContent className="p-6 space-y-4">
             <div>
-              <label className="text-sm font-medium">To: {selectedProfessor?.email}</label>
+              <label className="text-sm font-medium">To:</label>
+              <Input
+                value={emailDraft.to || selectedProfessor?.email || ''}
+                onChange={(e) => setEmailDraft(prev => ({ ...prev, to: e.target.value }))}
+                className="mt-1"
+                placeholder="Professor's email address"
+              />
             </div>
             
             <div>
