@@ -260,7 +260,8 @@ const Profile = () => {
         emailsData.push({
           id: doc.id,
           ...data,
-          sentAt: data.sentAt?.toDate?.() || null  // safely handle null/undefined
+          sentAt: data.sentAt?.toDate?.() || null,  // safely handle null/undefined
+          scheduledAt: data.scheduledAt?.toDate?.() || null, // safely handle null/undefined
         } as EmailRecord);
       });
       setEmails(emailsData);
@@ -393,7 +394,9 @@ const Profile = () => {
                           {email.status === 'scheduled' && email.scheduledAt ? (
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
-                              Scheduled: {email.scheduledAt.toLocaleDateString()} {email.scheduledAt.toLocaleTimeString()}
+                              Scheduled: {email.scheduledAt
+                                ? email.scheduledAt.toLocaleDateString() + ' ' + email.scheduledAt.toLocaleTimeString()
+                                : 'Not Scheduled'}
                             </span>
                           ) : email.sentAt ? (
                             <>
