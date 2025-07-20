@@ -47,12 +47,11 @@ export const sendReminderEmail = async (originalEmailData: EmailData, accessToke
       email: originalEmailData.professorEmail,
       user_prompt: `Follow-up reminder for: ${originalEmailData.researchInterest}`,
       user_data: userData,
-      data: {
-        originalSubject: originalEmailData.subject,
-        originalBody: originalEmailData.body,
-        researchInterest: originalEmailData.researchInterest,
-        isReminder: true
-      }
+      data: [
+        originalEmailData.subject,
+        originalEmailData.body,
+        originalEmailData.researchInterest,
+      ]
     });
 
     const reminderEmailData: EmailData = {
@@ -78,6 +77,7 @@ ${originalEmailData.userEmail}`,
       ...reminderEmailData,
       status: 'scheduled'
     });
+    
 
     // Send the reminder email
     await axios.post(`${API_BASE_URL}/api/send-email`, {
