@@ -46,7 +46,7 @@ export const sendReminderEmail = async (originalEmailData: EmailData, accessToke
       name: originalEmailData.professorName,
       email: originalEmailData.professorEmail,
       user_prompt: `Follow-up reminder for: ${originalEmailData.researchInterest}`,
-      user_data: userData,
+      user_data: `name: ${userData.name}`,
       data: [
         originalEmailData.subject,
         originalEmailData.body,
