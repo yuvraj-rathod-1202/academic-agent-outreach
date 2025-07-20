@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, Timestamp, FieldValue } from 'firebase/firestore';
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -12,6 +12,7 @@ export interface EmailData {
   subject: string;
   body: string;
   researchInterest: string;
+  sentAt?: Timestamp | FieldValue; // For sent emails
   status: 'sent' | 'scheduled' | 'delivered' | 'failed';
   to?: string; // Optional field for API-provided recipient
   scheduledAt?: Date; // For scheduled emails
@@ -53,7 +54,7 @@ export const sendReminderEmail = async (originalEmailData: EmailData, accessToke
         originalEmailData.researchInterest,
       ]
     });
-
+    console.log('API response:', response.data);
     const reminderEmailData: EmailData = {
       ...originalEmailData,
       subject: reminderSubject || response.data.subject || `Follow-up: ${originalEmailData.subject}`,
@@ -69,13 +70,15 @@ Thank you for your time and consideration.
 
 Best regards,
 ${originalEmailData.userEmail}`,
-      status: 'scheduled'
+      status: 'sent'
     };
 
     // Save reminder email to Firestore
     const emailId = await saveEmailToFirestore({
       ...reminderEmailData,
-      status: 'scheduled'
+      status: 'sent',
+      scheduledAt: null,
+      sentAt: serverTimestamp(),
     });
     
 
